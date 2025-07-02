@@ -1,47 +1,63 @@
+#ifndef UNICODE
+#define UNICODE
+#endif
+
 #include <windows.h>
+#include <hidsdi.h> // Required for HID functions like HidD_GetFeature
+#include <hidpi.h>
+#include <setupapi.h> // For device enumeration
 #include <vector>
-#include <map>
+#include <string>
+#include <sstream>
+#include <iomanip>
 
-#include "Win32MessageMap.h"
+//raw input gathered struct
+#pragma pack (push, r1, 1)
+extern "C" struct TouchpadInputReport_Touchpoint {
+    uint8_t pressedStatus;
+    uint8_t trackedTouchpointID;
+    uint16_t xPos;
+    uint16_t yPos;
+};
+extern "C" struct TouchpadInputReport {
+    char unknown1;
+    TouchpadInputReport_Touchpoint touchpoints[5];
+    uint16_t touchpointsPressed;
+    uint16_t tenthmsCount;
+};
+#pragma pack(pop, r1, 8)
 
-// Global map to store finger positions.
-// Key: Pointer ID (UINT32), Value: Position (POINT)
-std::map<UINT32, POINT> g_touchPoints;
+// Global variables to store the output strings
+static uint16_t g_lastTimerVal = 0;
+static std::wstring g_parsedInputOutput = L"Nothing here";
+static std::wstring g_rawInputOutput = L"Move your finger or click on the touchpad...";
 
-LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+// Forward declaration of the Window Procedure
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow) {
-    const wchar_t CLASS_NAME[] = L"PointerSampleWindowClass";
 
-    WNDCLASS wc = {};
-    wc.lpfnWndProc = WndProc;
+    const wchar_t CLASS_NAME[] = L"Raw Touchpad Input Window Class";
+
+    WNDCLASSW wc = {};
+    wc.lpfnWndProc = WindowProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 
-    RegisterClass(&wc);
+    RegisterClassW(&wc);
 
-    HWND hwnd = CreateWindowEx(
-        0, CLASS_NAME, L"Win32 Pointer (Multi-Touch) Example",
-        WS_OVERLAPPEDWINDOW,
+    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Raw Precision Touchpad Input", WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
-        NULL, NULL, hInstance, NULL
-    );
+        NULL, NULL, hInstance, NULL);
 
-    if (hwnd == NULL) {
-        return 0;
-    }
-
-    //register
-    //RegisterPointerInputTarget(hwnd, PT_TOUCHPAD);
-    EnableMouseInPointer(TRUE);
-    RegisterTouchWindow(hwnd, TWF_FINETOUCH | TWF_WANTPALM);
+    if (hwnd == NULL) return 0;
 
     ShowWindow(hwnd, nCmdShow);
 
     MSG msg = {};
-    while (GetMessage(&msg, NULL, 0, 0)) {
+    while (GetMessage(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
@@ -49,85 +65,108 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
     return 0;
 }
 
-LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    // Extract the pointer ID from a pointer message
-    UINT32 pointerId = GET_POINTERID_WPARAM(wParam);
-    POINTER_INFO pointerInfo = {};
-
-    wchar_t buf[64];
-    wsprintfW(buf, L"Messaged Received: %s\n", Win32MessageMap::GetMessageName(message));
-    OutputDebugStringW(buf);
-
-    switch (message) {
-    case WM_POINTERDOWN:
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    switch (uMsg) {
+    case WM_CREATE:
     {
-        // Get the full information for this pointer
-        if (GetPointerInfo(pointerId, &pointerInfo)) {
-            // We are only interested in touch inputs
-            if (pointerInfo.pointerType == PT_TOUCH) {
-                POINT pt = pointerInfo.ptPixelLocation;
-                ScreenToClient(hwnd, &pt);
-                // Add the new finger to our map
-                g_touchPoints[pointerId] = pt;
-                InvalidateRect(hwnd, NULL, TRUE);
-            }
+
+        RAWINPUTDEVICE rid;
+        rid.usUsagePage = 0x0D; // Digitizer
+        rid.usUsage = 0x05;     // Touch Pad
+        rid.dwFlags = RIDEV_INPUTSINK;
+        rid.hwndTarget = hwnd;
+
+        if (!RegisterRawInputDevices(&rid, 1, sizeof(RAWINPUTDEVICE))) {
+            MessageBox(hwnd, L"Failed to register for raw touchpad input.", L"Error", MB_ICONERROR);
         }
-        return 0; // Mark message as handled
+        return 0;
     }
 
-    case WM_POINTERUPDATE:
+    case WM_DESTROY:
     {
-        if (GetPointerInfo(pointerId, &pointerInfo)) {
-            POINT pt = pointerInfo.ptPixelLocation;
-            ScreenToClient(hwnd, &pt);
-            // Update the finger's position in our map
-            g_touchPoints[pointerId] = pt;
-            InvalidateRect(hwnd, NULL, TRUE);
-            if (pointerInfo.pointerType == PT_TOUCH) {
-                
-            }
-        }
-        return 0; // Mark message as handled
+        PostQuitMessage(0);
+        return 0;
     }
 
-    case WM_POINTERUP:
+    case WM_INPUT:
     {
-        // This pointer is now 'up', so remove it from our map
-        g_touchPoints.erase(pointerId);
+        UINT dataSize;
+        GetRawInputData((HRAWINPUT)lParam, RID_INPUT, NULL, &dataSize, sizeof(RAWINPUTHEADER));
+        std::vector<BYTE> buffer(dataSize);
+
+        if (GetRawInputData((HRAWINPUT)lParam, RID_INPUT, buffer.data(), &dataSize, sizeof(RAWINPUTHEADER)) != dataSize) {
+            g_rawInputOutput = L"Error getting raw input data.";
+        }
+        else {
+            RAWINPUT* raw = (RAWINPUT*)buffer.data();
+            if (raw->header.dwType == RIM_TYPEHID) {
+                std::wstringstream parsedSS;
+                TouchpadInputReport* tir = reinterpret_cast<TouchpadInputReport*>(&raw->data.hid.bRawData);
+                parsedSS << L"Unknown: " << tir->unknown1 << L"\n";
+                for (int i = 0; i < tir->touchpointsPressed; i++) {
+                    parsedSS << L"Touchpoint[" << i << 
+                        L"]: PressedStatus: " << tir->touchpoints[i].pressedStatus << 
+                        L" TrackedTouchpointID: " << tir->touchpoints[i].trackedTouchpointID <<
+                        L" xpos: " << tir->touchpoints[i].xPos <<
+                        L" ypos: " << tir->touchpoints[i].yPos <<
+                        L"\n";
+                }
+
+                parsedSS << L"Touchpoints pressed: " << tir->touchpointsPressed << L"\n";
+                parsedSS << L"Timer: " << tir->tenthmsCount << L"\n";
+                parsedSS << L"Timer delta from last update: " << tir->tenthmsCount - g_lastTimerVal << L"\n";
+                g_lastTimerVal = tir->tenthmsCount;
+
+                std::wstringstream ss;
+                ss << L"------------------------------------\n";
+                ss << L"Real-time HID Input Report:\n";
+                ss << std::hex << std::uppercase << std::setfill(L'0');
+
+                for (DWORD i = 0; i < raw->data.hid.dwSizeHid * raw->data.hid.dwCount; ++i) {
+                    ss << std::setw(2) << static_cast<int>(raw->data.hid.bRawData[i]) << L" ";
+                    if ((i + 1) % 16 == 0) ss << L"\n";
+                }
+                g_parsedInputOutput = parsedSS.str();
+                g_rawInputOutput = ss.str();
+            }
+        }
         InvalidateRect(hwnd, NULL, TRUE);
-        return 0; // Mark message as handled
+        return 0;
     }
 
     case WM_PAINT:
     {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
+
+        HFONT hFont = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY,
+            DEFAULT_PITCH | FF_MODERN, L"Consolas");
+        HFONT hOldFont = (HFONT)SelectObject(hdc, hFont);
+
         FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
 
-        HBRUSH hBrush = CreateSolidBrush(RGB(200, 0, 0)); // Red
-        HBRUSH hOldBrush = (HBRUSH)SelectObject(hdc, hBrush);
+        // Define two regions for drawing text
+        RECT topRect = ps.rcPaint;
+        topRect.bottom = topRect.bottom / 2; // Use top half for capabilities
 
-        // Draw a circle for each currently tracked finger
-        for (auto const& [id, pt] : g_touchPoints) {
-            Ellipse(hdc, pt.x - 20, pt.y - 20, pt.x + 20, pt.y + 20);
-        }
+        RECT bottomRect = ps.rcPaint;
+        bottomRect.top = topRect.bottom; // Use bottom half for raw input
 
-        SelectObject(hdc, hOldBrush);
-        DeleteObject(hBrush);
+        // Draw static capabilities
+        DrawTextW(hdc, g_parsedInputOutput.c_str(), -1, &topRect, DT_LEFT | DT_TOP | DT_WORDBREAK);
+
+        // Draw real-time input
+        DrawTextW(hdc, g_rawInputOutput.c_str(), -1, &bottomRect, DT_LEFT | DT_TOP | DT_WORDBREAK);
+
+        SelectObject(hdc, hOldFont);
+        DeleteObject(hFont);
+
         EndPaint(hwnd, &ps);
+        return 0;
     }
-    return 0;
 
-    case WM_CLOSE:
-        DestroyWindow(hwnd);
-        break;
+    } // end switch
 
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        break;
-
-    default:
-        return DefWindowProc(hwnd, message, wParam, lParam);
-    }
-    return 0;
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
