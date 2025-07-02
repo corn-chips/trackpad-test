@@ -2,6 +2,8 @@
 #include <vector>
 #include <map>
 
+#include "Win32MessageMap.h"
+
 // Global map to store finger positions.
 // Key: Pointer ID (UINT32), Value: Position (POINT)
 std::map<UINT32, POINT> g_touchPoints;
@@ -31,7 +33,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR pCmdLine, int nCmdShow
         return 0;
     }
 
-    // No registration required for WM_POINTER messages!
+    //register
+    //RegisterPointerInputTarget(hwnd, PT_TOUCHPAD);
+    EnableMouseInPointer(TRUE);
+    RegisterTouchWindow(hwnd, TWF_FINETOUCH | TWF_WANTPALM);
 
     ShowWindow(hwnd, nCmdShow);
 
@@ -48,6 +53,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     // Extract the pointer ID from a pointer message
     UINT32 pointerId = GET_POINTERID_WPARAM(wParam);
     POINTER_INFO pointerInfo = {};
+
+    wchar_t buf[64];
+    wsprintfW(buf, L"Messaged Received: %s\n", Win32MessageMap::GetMessageName(message));
+    OutputDebugStringW(buf);
 
     switch (message) {
     case WM_POINTERDOWN:
@@ -69,12 +78,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) 
     case WM_POINTERUPDATE:
     {
         if (GetPointerInfo(pointerId, &pointerInfo)) {
+            POINT pt = pointerInfo.ptPixelLocation;
+            ScreenToClient(hwnd, &pt);
+            // Update the finger's position in our map
+            g_touchPoints[pointerId] = pt;
+            InvalidateRect(hwnd, NULL, TRUE);
             if (pointerInfo.pointerType == PT_TOUCH) {
-                POINT pt = pointerInfo.ptPixelLocation;
-                ScreenToClient(hwnd, &pt);
-                // Update the finger's position in our map
-                g_touchPoints[pointerId] = pt;
-                InvalidateRect(hwnd, NULL, TRUE);
+                
             }
         }
         return 0; // Mark message as handled
