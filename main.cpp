@@ -100,7 +100,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
         else {
             RAWINPUT* raw = (RAWINPUT*)buffer.data();
             if (raw->header.dwType == RIM_TYPEHID) {
-                std::wstringstream parsedSS;
+               /* std::wstringstream parsedSS;
                 TouchpadInputReport* tir = reinterpret_cast<TouchpadInputReport*>(&raw->data.hid.bRawData);
                 parsedSS << L"Unknown: " << tir->unknown1 << L"\n";
                 for (int i = 0; i < tir->touchpointsPressed; i++) {
@@ -115,7 +115,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                 parsedSS << L"Touchpoints pressed: " << tir->touchpointsPressed << L"\n";
                 parsedSS << L"Timer: " << tir->tenthmsCount << L"\n";
                 parsedSS << L"Timer delta from last update: " << tir->tenthmsCount - g_lastTimerVal << L"\n";
-                g_lastTimerVal = tir->tenthmsCount;
+                g_lastTimerVal = tir->tenthmsCount;*/
 
                 std::wstringstream ss;
                 ss << L"------------------------------------\n";
@@ -126,7 +126,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
                     ss << std::setw(2) << static_cast<int>(raw->data.hid.bRawData[i]) << L" ";
                     if ((i + 1) % 16 == 0) ss << L"\n";
                 }
-                g_parsedInputOutput = parsedSS.str();
+                //g_parsedInputOutput = parsedSS.str();
                 g_rawInputOutput = ss.str();
             }
         }
